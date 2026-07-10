@@ -6121,19 +6121,516 @@
 
     -- ═══════════════════════════════════════════════════════════════
     -- ESP PREVIEW PANEL
-    -- Отдельное окошко как PetPanel, но внутри ViewportFrame с клоном
-    -- персонажа + WireframeHandleAdornment на костях + Drawing ESP оверлей.
-    -- Использование в main.lua:
-    --   local ESPPanel = Library:ESPPreviewPanel({
-    --       AnchorWindow = Window,
-    --       Side         = "Right",
-    --       Gap          = 8,
-    --       AlignY       = "Top",
-    --       Flags        = flags,        -- твоя таблица ESP флагов
-    --       TargetName   = "",           -- начальный ник (пусто = LocalPlayer)
-    --   })
     -- ═══════════════════════════════════════════════════════════════
     function Library:ESPPreviewPanel(properties)
+        local Cfg = {
+            AnchorWindow = properties and properties.AnchorWindow or nil;
+            Side         = properties and properties.Side or "Right";
+            Gap          = properties and properties.Gap or 8;
+            AlignY       = properties and properties.AlignY or "Top";
+            Flags        = properties and properties.Flags or {};
+            TargetName   = properties and properties.TargetName or "";
+            Width        = properties and properties.Width or 220;
+            Height       = properties and properties.Height or 280;
+            Rotate       = properties and properties.Rotate ~= nil and properties.Rotate or true;
+            RotateSpeed  = properties and properties.RotateSpeed or 40;
+        }
+
+        -- Размер окна = Content + рамки (точно как PetPanel)
+        local PanelW = Cfg.Width + 10
+        local PanelH = Cfg.Height + 50
+
+        -- Стартовая позиция: якоримся к главному окну
+        local StartPosition
+        do
+            local MainWindow = Cfg.AnchorWindow and Cfg.AnchorWindow.Items and Cfg.AnchorWindow.Items.Window
+            if MainWindow then
+                local mx = MainWindow.Position.X.Offset
+                local my = MainWindow.Position.Y.Offset
+                local mw = MainWindow.Size.X.Offset
+                local mh = MainWindow.Size.Y.Offset
+                local x  = Cfg.Side == "Right" and (mx + mw + Cfg.Gap) or (mx - PanelW - Cfg.Gap)
+                local y  = Cfg.AlignY == "Center" and (my + mh/2 - PanelH/2) or my
+                StartPosition = dim2(0, x, 0, y)
+            else
+                StartPosition = dim2(0.5, -PanelW/2, 0.5, -PanelH/2)
+            end
+        end
+
+        local Items = {}
+
+        -- ScreenGui
+        Items.Gui = Library:Create("ScreenGui", {
+            Parent         = CoreGui;
+            Name           = "\0";
+            ResetOnSpawn   = false;
+            ZIndexBehavior = Enum.ZIndexBehavior.Sibling;
+            IgnoreGuiInset = true;
+            DisplayOrder   = 998;
+        })
+
+        -- Внешний outline (как у PetPanel)
+        Items.Window = Library:Create("Frame", {
+            Parent           = Items.Gui;
+            Name             = "\0";
+            Position         = StartPosition;
+            Size             = dim2(0, PanelW, 0, PanelH);
+            BorderSizePixel  = 0;
+            BackgroundColor3 = themes.preset.outline;
+            ClipsDescendants = false;
+        }); Library:Themify(Items.Window, "outline", "BackgroundColor3")
+
+        -- Accent полоска сверху
+        Items.Accent = Library:Create("Frame", {
+            Parent           = Items.Window;
+            Position         = dim2(0, 1, 0, 1);
+            Size             = dim2(1, -2, 0, 2);
+            BorderSizePixel  = 0;
+            BackgroundColor3 = themes.preset.accent;
+        }); Library:Themify(Items.Accent, "accent", "BackgroundColor3")
+
+        Library:Create("UIGradient", {
+            Rotation = 90;
+            Parent   = Items.Accent;
+            Color    = rgbseq{rgbkey(0, rgb(255,255,255)), rgbkey(1, rgb(158,158,158))};
+        })
+
+        -- Внутренний фон
+        Items.Inline = Library:Create("Frame", {
+            Parent           = Items.Window;
+            Position         = dim2(0, 1, 0, 4);
+            Size             = dim2(1, -2, 1, -5);
+            BorderSizePixel  = 0;
+            BackgroundColor3 = themes.preset.gradient;
+            ClipsDescendants = true;
+        }); Library:Themify(Items.Inline, "gradient", "BackgroundColor3")
+
+        -- Шапка (drag bar)
+        Items.TopBar = Library:Create("Frame", {
+            Parent           = Items.Inline;
+            Position         = dim2(0, 1, 0, 1);
+            Size             = dim2(1, -2, 0, 16);
+            BorderSizePixel  = 0;
+            BackgroundColor3 = rgb(255,255,255);
+        })
+
+        local topGrad = Library:Create("UIGradient", {
+            Rotation = 90;
+            Parent   = Items.TopBar;
+            Color    = rgbseq{rgbkey(0, themes.preset.inline), rgbkey(1, themes.preset.gradient)};
+        }); Library:SaveGradient(topGrad, "Selected")
+
+        -- Заголовок
+        Items.TitleLabel = Library:Create("TextLabel", {
+            FontFace               = Library.Font;
+            Parent                 = Items.TopBar;
+            Text                   = "ESP Preview";
+            TextColor3             = themes.preset.text_color;
+            BackgroundTransparency = 1;
+            Position               = dim2(0, 6, 0, 0);
+            Size                   = dim2(1, -22, 1, 0);
+            TextXAlignment         = Enum.TextXAlignment.Left;
+            TextSize               = 12;
+            BorderSizePixel        = 0;
+            ZIndex                 = 2;
+        }); Library:Themify(Items.TitleLabel, "text_color", "TextColor3")
+
+        Library:Create("UIStroke", { Parent = Items.TitleLabel; LineJoinMode = Enum.LineJoinMode.Miter })
+
+        -- Кнопка X
+        Items.CloseBtn = Library:Create("TextButton", {
+            FontFace               = Library.Font;
+            Parent                 = Items.TopBar;
+            Text                   = "X";
+            TextColor3             = themes.preset.text_color;
+            BackgroundTransparency = 1;
+            AnchorPoint            = vec2(1, 0);
+            Position               = dim2(1, -4, 0, 0);
+            Size                   = dim2(0, 16, 1, 0);
+            TextSize               = 12;
+            BorderSizePixel        = 0;
+            ZIndex                 = 2;
+        }); Library:Themify(Items.CloseBtn, "text_color", "TextColor3")
+
+        Library:Connection(Items.CloseBtn.MouseButton1Click, function()
+            Items.Window.Visible = false
+        end)
+
+        -- Контейнер ViewportFrame (outline рамка вокруг VP)
+        -- Отступ сверху = 20 (шапка), снизу = 37 (ник+кнопки)
+        Items.VPContainer = Library:Create("Frame", {
+            Parent           = Items.Inline;
+            Position         = dim2(0, 5, 0, 20);
+            Size             = dim2(1, -10, 1, -57);
+            BorderSizePixel  = 0;
+            BackgroundColor3 = themes.preset.outline;
+            ClipsDescendants = true;
+        }); Library:Themify(Items.VPContainer, "outline", "BackgroundColor3")
+
+        -- ViewportFrame — 1px отступ от рамки
+        Items.Viewport = Library:Create("ViewportFrame", {
+            Parent           = Items.VPContainer;
+            Position         = dim2(0, 1, 0, 1);
+            Size             = dim2(1, -2, 1, -2);
+            BackgroundColor3 = rgb(12, 12, 16);
+            BorderSizePixel  = 0;
+            Ambient          = rgb(160, 160, 160);
+            LightDirection   = vec3(-1, -2, -1);
+            LightColor       = rgb(255, 255, 255);
+            ClipsDescendants = true;
+        })
+
+        -- Камера для Viewport
+        local vpCamera = Instance.new("Camera")
+        vpCamera.Parent = Items.Viewport
+        Items.Viewport.CurrentCamera = vpCamera
+
+        -- ── ESP оверлей поверх Viewport (внутри VPContainer, ClipsDescendants=true)
+        -- Имя игрока (сверху по центру)
+        Items.NameLabel = Library:Create("TextLabel", {
+            FontFace               = Library.Font;
+            Parent                 = Items.VPContainer;
+            Text                   = "";
+            TextColor3             = rgb(255, 255, 255);
+            BackgroundTransparency = 0.35;
+            BackgroundColor3       = rgb(0, 0, 0);
+            AnchorPoint            = vec2(0.5, 0);
+            Position               = dim2(0.5, 0, 0, 3);
+            Size                   = dim2(0, 80, 0, 13);
+            TextSize               = 11;
+            BorderSizePixel        = 0;
+            ZIndex                 = 6;
+            Visible                = false;
+        })
+        Library:Create("UICorner", { Parent = Items.NameLabel; CornerRadius = dim(0, 2) })
+
+        -- Хелсбар (снизу внутри VP, горизонтальный)
+        Items.HpBarBg = Library:Create("Frame", {
+            Parent           = Items.VPContainer;
+            AnchorPoint      = vec2(0, 1);
+            Position         = dim2(0, 1, 1, -1);
+            Size             = dim2(1, -2, 0, 4);
+            BorderSizePixel  = 0;
+            BackgroundColor3 = rgb(20, 20, 20);
+            ZIndex           = 6;
+        })
+
+        Items.HpBar = Library:Create("Frame", {
+            Parent           = Items.HpBarBg;
+            Position         = dim2(0, 0, 0, 0);
+            Size             = dim2(1, 0, 1, 0);
+            BorderSizePixel  = 0;
+            BackgroundColor3 = rgb(0, 200, 80);
+            ZIndex           = 7;
+        })
+
+        -- Corner-бокс поверх VP (внутри VPContainer)
+        local cSz = 8
+        local cTh = 2
+        local cornerDefs = {
+            -- TopLeft H, TopLeft V
+            {0,0, cSz, cTh}, {0,0, cTh, cSz},
+            -- TopRight H, TopRight V
+            {1,0, cSz, cTh}, {1,0, cTh, cSz},
+            -- BotLeft H, BotLeft V
+            {0,1, cSz, cTh}, {0,1, cTh, cSz},
+            -- BotRight H, BotRight V
+            {1,1, cSz, cTh}, {1,1, cTh, cSz},
+        }
+        Items.Corners = {}
+        for _, d in cornerDefs do
+            table.insert(Items.Corners, Library:Create("Frame", {
+                Parent           = Items.VPContainer;
+                AnchorPoint      = vec2(d[1], d[2]);
+                Position         = dim2(d[1], 0, d[2], 0);
+                Size             = dim2(0, d[3], 0, d[4]);
+                BorderSizePixel  = 0;
+                BackgroundColor3 = rgb(255, 255, 255);
+                ZIndex           = 6;
+                Visible          = false;
+            }))
+        end
+
+        -- ── Нижняя панель: кнопки + текстбокс ────────────────────────
+        -- Кнопки Rotate / Pose
+        Items.RotBtn = Library:Create("TextButton", {
+            FontFace          = Library.Font;
+            Parent            = Items.Inline;
+            Text              = "⟳ Rotate";
+            TextColor3        = themes.preset.text_color;
+            BackgroundColor3  = themes.preset.gradient;
+            AnchorPoint       = vec2(0, 1);
+            Position          = dim2(0, 5, 1, -22);
+            Size              = dim2(0.5, -7, 0, 14);
+            TextSize          = 11;
+            BorderSizePixel   = 0;
+            ZIndex            = 3;
+        }); Library:Themify(Items.RotBtn, "gradient", "BackgroundColor3")
+        Library:Themify(Items.RotBtn, "text_color", "TextColor3")
+        Library:Create("UIStroke", { Parent = Items.RotBtn; Color = themes.preset.outline; LineJoinMode = Enum.LineJoinMode.Miter })
+
+        Items.PoseBtn = Library:Create("TextButton", {
+            FontFace          = Library.Font;
+            Parent            = Items.Inline;
+            Text              = "↺ Refresh";
+            TextColor3        = themes.preset.text_color;
+            BackgroundColor3  = themes.preset.gradient;
+            AnchorPoint       = vec2(1, 1);
+            Position          = dim2(1, -5, 1, -22);
+            Size              = dim2(0.5, -7, 0, 14);
+            TextSize          = 11;
+            BorderSizePixel   = 0;
+            ZIndex            = 3;
+        }); Library:Themify(Items.PoseBtn, "gradient", "BackgroundColor3")
+        Library:Themify(Items.PoseBtn, "text_color", "TextColor3")
+        Library:Create("UIStroke", { Parent = Items.PoseBtn; Color = themes.preset.outline; LineJoinMode = Enum.LineJoinMode.Miter })
+
+        -- Текстбокс для ника
+        Items.NickOutline = Library:Create("Frame", {
+            Parent           = Items.Inline;
+            AnchorPoint      = vec2(0, 1);
+            Position         = dim2(0, 5, 1, -5);
+            Size             = dim2(1, -10, 0, 15);
+            BorderSizePixel  = 0;
+            BackgroundColor3 = themes.preset.outline;
+        }); Library:Themify(Items.NickOutline, "outline", "BackgroundColor3")
+
+        Items.NickInner = Library:Create("Frame", {
+            Parent           = Items.NickOutline;
+            Position         = dim2(0, 1, 0, 1);
+            Size             = dim2(1, -2, 1, -2);
+            BorderSizePixel  = 0;
+            BackgroundColor3 = themes.preset.inline;
+        }); Library:Themify(Items.NickInner, "inline", "BackgroundColor3")
+
+        Items.NickBox = Library:Create("TextBox", {
+            FontFace               = Library.Font;
+            Parent                 = Items.NickInner;
+            Text                   = Cfg.TargetName;
+            PlaceholderText        = "ник (пусто = ты)";
+            PlaceholderColor3      = rgb(100, 100, 100);
+            TextColor3             = themes.preset.text_color;
+            BackgroundTransparency = 1;
+            Position               = dim2(0, 4, 0, 0);
+            Size                   = dim2(1, -8, 1, 0);
+            TextXAlignment         = Enum.TextXAlignment.Left;
+            TextSize               = 11;
+            BorderSizePixel        = 0;
+            ClearTextOnFocus       = false;
+            ZIndex                 = 3;
+        }); Library:Themify(Items.NickBox, "text_color", "TextColor3")
+
+        -- ── Логика ───────────────────────────────────────────────────
+        local state = {
+            rotating = Cfg.Rotate;
+            rotAngle = 0;
+            clone    = nil;
+            conn     = nil;
+        }
+
+        local function ClearClone()
+            if state.clone then
+                pcall(function() state.clone:Destroy() end)
+                state.clone = nil
+            end
+        end
+
+        local function LoadTarget(name)
+            ClearClone()
+
+            -- Находим игрока
+            local tp
+            if name and name ~= "" then
+                tp = Players:FindFirstChild(name)
+                if not tp then
+                    for _, p in Players:GetPlayers() do
+                        if p.Name:lower():find(name:lower(), 1, true) then tp = p; break end
+                    end
+                end
+            else
+                tp = Players.LocalPlayer
+            end
+
+            if not tp then
+                Items.NameLabel.Text    = "not found"
+                Items.NameLabel.Visible = true
+                return
+            end
+
+            local char = tp.Character
+            if not char then
+                Items.NameLabel.Text    = "no char"
+                Items.NameLabel.Visible = true
+                return
+            end
+
+            Items.NameLabel.Text    = tp.Name
+            Items.NameLabel.Visible = (Cfg.Flags and Cfg.Flags["Names"]) or true
+
+            -- Клон
+            local ok, clone = pcall(function() return char:Clone() end)
+            if not ok or not clone then return end
+
+            -- Чистим всё лишнее
+            for _, s in clone:GetDescendants() do
+                if s:IsA("BaseScript") or s:IsA("ModuleScript")
+                    or s:IsA("Animator") or s:IsA("Animation")
+                    or s:IsA("SelectionBox") or s:IsA("BillboardGui")
+                    or s:IsA("SurfaceGui") or s:IsA("BodyMover")
+                    or s:IsA("Constraint") then
+                    s:Destroy()
+                end
+            end
+
+            -- Якорим, убираем коллизии
+            for _, p in clone:GetDescendants() do
+                if p:IsA("BasePart") then
+                    p.Anchored    = true
+                    p.CanCollide  = false
+                    p.CastShadow  = false
+                    pcall(function()
+                        p.Velocity    = Vector3.zero
+                        p.RotVelocity = Vector3.zero
+                    end)
+                end
+            end
+
+            -- Центруем клон в (0,0,0)
+            local root = clone:FindFirstChild("HumanoidRootPart")
+                or clone:FindFirstChildWhichIsA("BasePart")
+            if root then
+                local inv = root.CFrame:inverse()
+                for _, p in clone:GetDescendants() do
+                    if p:IsA("BasePart") then
+                        p.CFrame = inv * p.CFrame
+                    end
+                end
+                root.CFrame = CFrame.identity
+            end
+
+            clone.Parent = Items.Viewport
+            state.clone  = clone
+
+            -- Сброс камеры
+            state.rotAngle      = 0
+            vpCamera.CFrame     = CFrame.new(Vector3.new(0, 1, 4.5), Vector3.new(0, 1, 0))
+            vpCamera.FieldOfView = 38
+
+            -- HP
+            local hum = tp.Character and tp.Character:FindFirstChildOfClass("Humanoid")
+            if hum then
+                local pct = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+                Items.HpBar.Size = dim2(pct, 0, 1, 0)
+                Items.HpBar.BackgroundColor3 = rgb(
+                    math.floor((1 - pct) * 220),
+                    math.floor(pct * 200),
+                    0
+                )
+            end
+
+            -- Corner-бокс
+            local showBox  = Cfg.Flags and Cfg.Flags["Boxes"] or false
+            local boxColor = Cfg.Flags and Cfg.Flags["Box_Color"] and Cfg.Flags["Box_Color"].Color or rgb(255,255,255)
+            for _, c in Items.Corners do
+                c.Visible          = showBox
+                c.BackgroundColor3 = boxColor
+            end
+        end
+
+        -- RenderStepped: вращение + обновление HP
+        local function StartLoop()
+            if state.conn then state.conn:Disconnect() end
+            state.conn = RunService.RenderStepped:Connect(function(dt)
+                if not Items.Window.Visible then return end
+                if not state.clone then return end
+
+                -- Вращение камеры вокруг (0,1,0)
+                if state.rotating then
+                    state.rotAngle = (state.rotAngle + dt * Cfg.RotateSpeed) % 360
+                    local r = math.rad(state.rotAngle)
+                    local d = 4.5
+                    vpCamera.CFrame     = CFrame.new(
+                        Vector3.new(math.sin(r)*d, 1, math.cos(r)*d),
+                        Vector3.new(0, 1, 0)
+                    )
+                    vpCamera.FieldOfView = 38
+                end
+
+                -- Живой HP
+                local nick = Items.NickBox.Text
+                local tp   = (nick ~= "") and Players:FindFirstChild(nick) or Players.LocalPlayer
+                if tp and tp.Character then
+                    local hum = tp.Character:FindFirstChildOfClass("Humanoid")
+                    if hum then
+                        local pct = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+                        pcall(function()
+                            Items.HpBar.Size = dim2(pct, 0, 1, 0)
+                            Items.HpBar.BackgroundColor3 = rgb(
+                                math.floor((1-pct)*220),
+                                math.floor(pct*200),
+                                0
+                            )
+                        end)
+                    end
+                end
+            end)
+        end
+
+        -- Кнопки
+        Library:Connection(Items.RotBtn.MouseButton1Click, function()
+            state.rotating    = not state.rotating
+            Items.RotBtn.Text = state.rotating and "⟳ ON" or "⟳ OFF"
+        end)
+        Library:Connection(Items.PoseBtn.MouseButton1Click, function()
+            LoadTarget(Items.NickBox.Text)
+        end)
+        Library:Connection(Items.NickBox.FocusLost, function()
+            LoadTarget(Items.NickBox.Text)
+        end)
+
+        -- Drag за шапку
+        do
+            local drag, dragStart, startPos = false
+            Library:Connection(Items.TopBar.InputBegan, function(inp)
+                if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+                    drag      = true
+                    dragStart = inp.Position
+                    startPos  = Items.Window.Position
+                    inp.Changed:Connect(function()
+                        if inp.UserInputState == Enum.UserInputState.End then drag = false end
+                    end)
+                end
+            end)
+            Library:Connection(InputService.InputChanged, function(inp)
+                if drag and inp.UserInputType == Enum.UserInputType.MouseMovement then
+                    local d = inp.Position - dragStart
+                    Items.Window.Position = dim2(
+                        startPos.X.Scale, startPos.X.Offset + d.X,
+                        startPos.Y.Scale, startPos.Y.Offset + d.Y
+                    )
+                end
+            end)
+        end
+
+        -- Инициализация
+        task.spawn(function()
+            task.wait(0.2)  -- небольшая задержка чтобы персонаж точно загрузился
+            LoadTarget(Cfg.TargetName)
+        end)
+        StartLoop()
+
+        Library:Connection(Players.LocalPlayer.CharacterAdded, function()
+            task.wait(1)
+            LoadTarget(Items.NickBox.Text)
+        end)
+
+        Library.ESPPreviewPanelInstance = Items
+        return Items
+    end
+    --
+--
+
+return Library, Notifications, themes
         local Cfg = {
             AnchorWindow = properties and properties.AnchorWindow or nil;
             Side         = properties and properties.Side or "Right";
@@ -6477,7 +6974,7 @@
             conn        = nil;   -- RenderStepped
         }
 
-        -- Удаляем старый клон и wireframes
+        -- Удаляем старый клон и selection boxes
         local function ClearClone()
             for _, w in state.wireframes do
                 pcall(function() w:Destroy() end)
@@ -6489,7 +6986,7 @@
             end
         end
 
-        -- Устанавливает цвет wireframe по текущим ESP flags
+        -- Устанавливает цвет outline по текущим ESP flags
         local function GetWireColor()
             local f = Cfg.Flags
             if f and f["Enemy_Color"] and f["Enemy_Color"].Color then
@@ -6498,17 +6995,19 @@
             return Cfg.WireColor
         end
 
-        -- Строим WireframeHandleAdornment на каждой BasePart клона
+        -- SelectionBox на каждой BasePart клона (работает внутри ViewportFrame)
         local function AttachWireframes(charClone)
+            local col = GetWireColor()
             for _, part in charClone:GetDescendants() do
-                if part:IsA("BasePart") then
-                    local wf = Instance.new("WireframeHandleAdornment")
-                    wf.Color3    = GetWireColor()
-                    wf.LineThickness = Cfg.WireThick
-                    wf.ZIndex    = 2
-                    wf.Adornee   = part
-                    wf.Parent    = part
-                    table.insert(state.wireframes, wf)
+                if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                    local sb = Instance.new("SelectionBox")
+                    sb.Color3         = col
+                    sb.LineThickness  = Cfg.WireThick * 0.04
+                    sb.SurfaceTransparency = 0.92
+                    sb.SurfaceColor3  = col
+                    sb.Adornee        = part
+                    sb.Parent         = Items.Viewport
+                    table.insert(state.wireframes, sb)
                 end
             end
         end
@@ -6521,7 +7020,6 @@
             if name and name ~= "" then
                 targetPlayer = Players:FindFirstChild(name)
                 if not targetPlayer then
-                    -- нечёткий поиск
                     for _, p in Players:GetPlayers() do
                         if p.Name:lower():find(name:lower(), 1, true) then
                             targetPlayer = p
@@ -6534,65 +7032,81 @@
             end
 
             if not targetPlayer then
-                Items.TitleLabel.Text = "ESP Preview — not found"
+                Items.TitleLabel.Text = "ESP Preview"
+                Items.NameLabel.Text  = "not found"
                 return
             end
 
+            -- Ждём персонажа если его нет
             local char = targetPlayer.Character
             if not char then
-                Items.TitleLabel.Text = "ESP Preview — no character"
+                Items.TitleLabel.Text = "ESP Preview"
+                Items.NameLabel.Text  = "no character"
                 return
             end
 
-            -- Обновляем заголовок и метку ника
             Items.TitleLabel.Text = "ESP Preview"
             Items.NameLabel.Text  = targetPlayer.Name
 
-            -- Клонируем персонажа
-            local clone = char:Clone()
-            -- Убираем скрипты из клона чтобы не тормозило
+            -- Клонируем
+            local ok, clone = pcall(function() return char:Clone() end)
+            if not ok or not clone then return end
+
+            -- Чистим скрипты и части не влияющие на внешний вид
             for _, s in clone:GetDescendants() do
-                if s:IsA("Script") or s:IsA("LocalScript") or s:IsA("ModuleScript") then
+                if s:IsA("Script") or s:IsA("LocalScript") or s:IsA("ModuleScript")
+                    or s:IsA("Animator") or s:IsA("Animation") then
                     s:Destroy()
                 end
             end
-            -- Якорим все части чтобы не падали
+
+            -- Якорим, убираем коллизии, сбрасываем Velocity
             for _, p in clone:GetDescendants() do
                 if p:IsA("BasePart") then
-                    p.Anchored   = true
-                    p.CanCollide = false
+                    p.Anchored    = true
+                    p.CanCollide  = false
+                    p.Velocity    = Vector3.new(0, 0, 0)
+                    p.RotVelocity = Vector3.new(0, 0, 0)
+                    p.CastShadow  = false
                 end
             end
 
-            clone.Parent = Items.Viewport
-            state.clonedChar = clone
-
-            -- Привязываем WireframeHandleAdornment
-            AttachWireframes(clone)
-
-            -- Позиционируем камеру ViewportFrame
+            -- Перемещаем клон в начало координат чтобы камера была предсказуема
             local root = clone:FindFirstChild("HumanoidRootPart") or clone:FindFirstChildWhichIsA("BasePart")
             if root then
-                local cf = root.CFrame
-                vpCamera.CFrame = CFrame.new(
-                    cf.Position + cf.LookVector * -5 + Vector3.new(0, 1, 0),
-                    cf.Position + Vector3.new(0, 1, 0)
-                )
-                vpCamera.FieldOfView = 45
+                local offset = root.CFrame:inverse()
+                for _, p in clone:GetDescendants() do
+                    if p:IsA("BasePart") then
+                        p.CFrame = offset * p.CFrame
+                    end
+                end
+                root.CFrame = CFrame.new(0, 0, 0)
             end
 
-            -- Хелсбар
-            local hum = clone:FindFirstChildOfClass("Humanoid")
+            clone.Parent   = Items.Viewport
+            state.clonedChar = clone
+
+            -- SelectionBox скин-линии
+            AttachWireframes(clone)
+
+            -- Настраиваем камеру: смотрим на центр перса с небольшого отдаления
+            local camTarget = Vector3.new(0, 1, 0)  -- чуть выше ног (центр торса)
+            vpCamera.CFrame      = CFrame.new(Vector3.new(0, 1, 4.5), camTarget)
+            vpCamera.FieldOfView = 38
+
+            -- Хелсбар — берём из оригинального персонажа
+            local hum = char:FindFirstChildOfClass("Humanoid")
             if hum then
                 local pct = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
                 Items.HpBar.Size = dim2(1, 0, pct, 0)
-                -- цвет от зелёного к красному
-                local hp_r = math.floor((1 - pct) * 255)
-                local hp_g = math.floor(pct * 255)
-                Items.HpBar.BackgroundColor3 = rgb(hp_r, hp_g, 0)
+                Items.HpBar.BackgroundColor3 = rgb(
+                    math.floor((1 - pct) * 255),
+                    math.floor(pct * 200),
+                    0
+                )
             end
 
-            -- Бокс (показываем corner-уголки если Boxes включён)
+            -- Corners (corner-box)
             local showBox = Cfg.Flags and Cfg.Flags["Boxes"]
             local boxColor = (Cfg.Flags and Cfg.Flags["Box_Color"] and Cfg.Flags["Box_Color"].Color) or rgb(255,255,255)
             for _, c in Items.Corners do
@@ -6608,42 +7122,41 @@
                 if not Items.Window.Visible then return end
                 if not state.clonedChar then return end
 
-                -- Обновляем wireframe цвет если ESP Enemy_Color изменился
+                -- Обновляем цвет SelectionBox
                 local wc = GetWireColor()
                 for _, w in state.wireframes do
-                    pcall(function() w.Color3 = wc end)
+                    pcall(function()
+                        w.Color3        = wc
+                        w.SurfaceColor3 = wc
+                    end)
                 end
 
-                -- Вращение
+                -- Вращение: крутим камеру вокруг клона который стоит в (0,0,0)
                 if state.rotating then
                     state.rotAngle = (state.rotAngle + dt * Cfg.RotateSpeed) % 360
-
-                    local root = state.clonedChar:FindFirstChild("HumanoidRootPart")
-                        or state.clonedChar:FindFirstChildWhichIsA("BasePart")
-                    if root then
-                        -- Вращаем всего перса вокруг своей оси
-                        local center = root.Position
-                        local rad = math.rad(state.rotAngle)
-                        local camDist = 5
-                        vpCamera.CFrame = CFrame.new(
-                            center + Vector3.new(math.sin(rad)*camDist, 1, math.cos(rad)*camDist),
-                            center + Vector3.new(0, 1, 0)
-                        )
-                        vpCamera.FieldOfView = 45
-                    end
+                    local rad     = math.rad(state.rotAngle)
+                    local camDist = 4.5
+                    local camY    = 1        -- высота взгляда (центр торса)
+                    vpCamera.CFrame      = CFrame.new(
+                        Vector3.new(math.sin(rad) * camDist, camY, math.cos(rad) * camDist),
+                        Vector3.new(0, camY, 0)
+                    )
+                    vpCamera.FieldOfView = 38
                 end
 
-                -- Обновляем хелсбар в реальном времени
-                local char = state.clonedChar
-                if char then
-                    local hum = char:FindFirstChildOfClass("Humanoid")
+                -- Обновляем хелсбар с оригинального персонажа (не клона)
+                local tp = (Items.NickBox.Text ~= "") and Players:FindFirstChild(Items.NickBox.Text) or Players.LocalPlayer
+                if tp and tp.Character then
+                    local hum = tp.Character:FindFirstChildOfClass("Humanoid")
                     if hum then
                         local pct = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
                         pcall(function()
                             Items.HpBar.Size = dim2(1, 0, pct, 0)
-                            local hp_r = math.floor((1 - pct) * 255)
-                            local hp_g = math.floor(pct * 255)
-                            Items.HpBar.BackgroundColor3 = rgb(hp_r, hp_g, 0)
+                            Items.HpBar.BackgroundColor3 = rgb(
+                                math.floor((1 - pct) * 255),
+                                math.floor(pct * 200),
+                                0
+                            )
                         end)
                     end
                 end
